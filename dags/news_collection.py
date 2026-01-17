@@ -15,7 +15,7 @@ with DAG(
     dag_id='news_collection',
     default_args=default_args,
     description='Collect tech news from Hacker News and Dev.to',
-    schedule='@hourly',  # Каждый час
+    schedule='@daily',
     start_date=datetime(2025, 1, 1, tzinfo=UTC),
     catchup=False,
     tags={'news', 'collection'},

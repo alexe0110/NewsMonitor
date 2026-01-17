@@ -1,4 +1,3 @@
-from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,9 +20,9 @@ class ClickHouseSettings(BaseSettings):
 
 
 class HuggingFaceSettings(BaseSettings):
-    model_name: str = 'MoritzLaurer/deberta-v3-large-zeroshot-v2.0'
-    api_token: str | None = Field(None, description='Not required, but improves rate limit')
-    api_url: str = 'https://router.huggingface.co/models'
+    api_token: str
+    model_name: str = 'facebook/bart-large-mnli'
+    api_url: str = 'https://router.huggingface.co/hf-inference/models'
 
     model_config = SettingsConfigDict(env_prefix='HF_')
 
@@ -40,8 +39,8 @@ class ProcessingSettings(BaseSettings):
     fetch_limit: int = 30
 
 
-minio_settings = MinioSettings()            # type: ignore[missing-argument]
+minio_settings = MinioSettings()  # type: ignore[missing-argument]
 clickhouse_settings = ClickHouseSettings()  # type: ignore[missing-argument]
-hf_settings = HuggingFaceSettings()
+hf_settings = HuggingFaceSettings()  # type: ignore[missing-argument]
 storage_settings = StorageSettings()
 processing_settings = ProcessingSettings()
