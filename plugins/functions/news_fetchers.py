@@ -7,26 +7,25 @@ import io
 
 
 def get_minio_client():
-    """Создание MinIO клиента из environment variables"""
     return Minio(
         endpoint=os.getenv("MINIO_ENDPOINT", "minio:9000"),
         access_key=os.getenv("MINIO_ACCESS_KEY", "minioadmin"),
         secret_key=os.getenv("MINIO_SECRET_KEY", "minioadmin"),
-        secure=False
+        secure=False,
     )
 
 
 def save_to_minio(client, bucket, filename, data):
     """Сохранение JSON данных в MinIO"""
     json_data = json.dumps(data, indent=2)
-    json_bytes = json_data.encode('utf-8')
+    json_bytes = json_data.encode("utf-8")
 
     client.put_object(
         bucket_name=bucket,
         object_name=filename,
         data=io.BytesIO(json_bytes),
         length=len(json_bytes),
-        content_type='application/json'
+        content_type="application/json",
     )
 
 
@@ -35,14 +34,13 @@ def fetch_hackernews(**context):
     Загрузка топ-30 новостей из Hacker News API
     Сохраняет результат в MinIO bucket raw-news
     """
-    ti = context['ti']
+    ti = context["ti"]
     ti.log.info("Fetching Hacker News top stories...")
 
     # Получить список top story IDs
     try:
         response = httpx.get(
-            "https://hacker-news.firebaseio.com/v0/topstories.json",
-            timeout=10.0
+            "https://hacker-news.firebaseio.com/v0/topstories.json", timeout=10.0
         )
         response.raise_for_status()
         story_ids = response.json()[:30]  # Берем первые 30
@@ -56,25 +54,26 @@ def fetch_hackernews(**context):
         try:
             response = httpx.get(
                 f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json",
-                timeout=10.0
+                timeout=10.0,
             )
             response.raise_for_status()
             item = response.json()
 
-            # Добавляем только если есть title и url
-            if item and item.get('title') and item.get('url'):
-                news_items.append({
-                    'id': item.get('id'),
-                    'title': item.get('title'),
-                    'url': item.get('url'),
-                    'score': item.get('score', 0),
-                    'time': item.get('time'),
-                    'by': item.get('by'),
-                    'source': 'hackernews'
-                })
+            if item and item.get("title") and item.get("url"):
+                news_items.append(
+                    {
+                        "id": item.get("id"),
+                        "title": item.get("title"),
+                        "url": item.get("url"),
+                        "score": item.get("score", 0),
+                        "time": item.get("time"),
+                        "by": item.get("by"),
+                        "source": "hackernews",
+                    }
+                )
         except httpx.HTTPError as e:
             ti.log.warning(f"Failed to fetch story {story_id}: {e}")
-            continue  # Пропускаем эту новость, продолжаем дальше
+            continue
 
     ti.log.info(f"Fetched {len(news_items)} items from Hacker News")
 
@@ -93,15 +92,13 @@ def fetch_devto(**context):
     Загрузка последних 30 статей из Dev.to API
     Сохраняет результат в MinIO bucket raw-news
     """
-    ti = context['ti']
+    ti = context["ti"]
     ti.log.info("Fetching Dev.to articles...")
 
     # Получить статьи
     try:
         response = httpx.get(
-            "https://dev.to/api/articles",
-            params={'per_page': 30},
-            timeout=10.0
+            "https://dev.to/api/articles", params={"per_page": 30}, timeout=10.0
         )
         response.raise_for_status()
         articles = response.json()
@@ -112,16 +109,18 @@ def fetch_devto(**context):
     # Форматировать данные
     news_items = []
     for article in articles:
-        news_items.append({
-            'id': article.get('id'),
-            'title': article.get('title'),
-            'description': article.get('description'),
-            'url': article.get('url'),
-            'published_at': article.get('published_at'),
-            'tags': article.get('tag_list', []),
-            'user': article.get('user', {}).get('username'),
-            'source': 'devto'
-        })
+        news_items.append(
+            {
+                "id": article.get("id"),
+                "title": article.get("title"),
+                "description": article.get("description"),
+                "url": article.get("url"),
+                "published_at": article.get("published_at"),
+                "tags": article.get("tag_list", []),
+                "user": article.get("user", {}).get("username"),
+                "source": "devto",
+            }
+        )
 
     ti.log.info(f"Fetched {len(news_items)} items from Dev.to")
 
