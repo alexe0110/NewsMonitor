@@ -1,0 +1,22 @@
+[project]
+name = "newsmonitor"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "apache-airflow-providers-amazon>=8.0",
+    "transformers>=4.36",
+    "minio>=7.2",
+    "clickhouse-connect>=0.7",
+    "httpx>=0.25",
+    "feedparser>=6.0",
+    "pydantic>=2.5",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "ruff>=0.14.13",
+    "ty>=0.0.12",
+]
