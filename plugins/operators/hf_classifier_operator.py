@@ -1,92 +1,55 @@
-import json
 import logging
-import os
 import time
 from collections import Counter
 from datetime import datetime
 
-import clickhouse_connect
 import httpx
 import yaml
-from airflow.models import BaseOperator
-from minio import Minio
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+
+from config.settings import hf_settings, processing_settings, storage_settings
+from plugins.operators.base import BaseDataProcessingOperator
 
 logger = logging.getLogger(__name__)
 
-HF_API_URL = 'https://api-inference.huggingface.co/models'
 
-
-class HuggingFaceClassifierOperator(BaseOperator):
+class HuggingFaceClassifierOperator(BaseDataProcessingOperator):
     """
     Оператор классификации новостей через HuggingFace Inference API.
 
     Читает обработанные новости из MinIO, классифицирует через HuggingFace API
     (zero-shot classification) и сохраняет результаты в ClickHouse.
-
-    Args:
-        source_task_id: ID таска для получения имени файла через XCom.
-        model_name: Название модели HuggingFace.
-        categories_config: Путь к YAML файлу с категориями.
-        min_confidence: Минимальный порог уверенности.
-        source_bucket: Bucket для чтения данных.
     """
 
     def __init__(
         self,
         *,
         source_task_id: str = 'preprocess_news',
-        model_name: str = 'facebook/bart-large-mnli',
-        categories_config: str = '/opt/airflow/config/categories.yaml',
-        min_confidence: float = 0.3,
-        source_bucket: str = 'processed-news',
+        categories_config: str | None = None,
+        min_confidence: float | None = None,
+        source_bucket: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.source_task_id = source_task_id
-        self.model_name = os.getenv('HF_MODEL_NAME', model_name)
-        self.categories_config = categories_config
-        self.min_confidence = min_confidence
-        self.source_bucket = source_bucket
-
-    def _get_minio_client(self) -> Minio:
-        return Minio(
-            endpoint=os.getenv('MINIO_ENDPOINT', 'minio:9000'),
-            access_key=os.getenv('MINIO_ACCESS_KEY', 'minioadmin'),
-            secret_key=os.getenv('MINIO_SECRET_KEY', 'minioadmin'),
-            secure=False,
-        )
-
-    def _get_clickhouse_client(self):
-        return clickhouse_connect.get_client(
-            host=os.getenv('CLICKHOUSE_HOST', 'clickhouse'),
-            username=os.getenv('CLICKHOUSE_USER', 'default'),
-            password=os.getenv('CLICKHOUSE_PASSWORD', 'clickhouse'),
-            database=os.getenv('CLICKHOUSE_DB', 'news_analytics'),
-        )
-
-    def _read_json_from_minio(self, client: Minio, bucket: str, filename: str) -> list:
-        response = client.get_object(bucket, filename)
-        data = json.loads(response.read().decode('utf-8'))
-        response.close()
-        response.release_conn()
-        return data
+        self.model_name = hf_settings.model_name
+        self.api_url = hf_settings.api_url
+        self.api_token = hf_settings.api_token
+        self.categories_config = categories_config or storage_settings.categories_config
+        self.min_confidence = min_confidence or processing_settings.min_confidence
+        self.source_bucket = source_bucket or storage_settings.processed_bucket
 
     def _load_categories(self) -> list[str]:
+        """Загрузка категорий из YAML конфига."""
         with open(self.categories_config) as f:
             config = yaml.safe_load(f)
         return [cat['name'] for cat in config['categories'].values()]
 
     def _get_headers(self) -> dict:
+        """Формирование заголовков для HF API."""
         headers = {'Content-Type': 'application/json'}
-        token = os.getenv('HF_API_TOKEN')
-        if token:
-            headers['Authorization'] = f'Bearer {token}'
+        if self.api_token:
+            headers['Authorization'] = f'Bearer {self.api_token}'
         return headers
 
     @retry(
@@ -94,104 +57,72 @@ class HuggingFaceClassifierOperator(BaseOperator):
         wait=wait_exponential(multiplier=1, min=1, max=10),
         retry=retry_if_exception_type((httpx.HTTPStatusError, httpx.TimeoutException)),
     )
-    def _classify_text(self, text: str, candidate_labels: list[str]) -> tuple[dict, int, int]:
-        """
-        Классификация текста через HuggingFace API.
+    def _classify_text(self, text: str, labels: list[str]) -> tuple[dict, int, int]:
+        """Классификация через HuggingFace API."""
+        url = f'{self.api_url}/{self.model_name}'
+        payload = {'inputs': text, 'parameters': {'candidate_labels': labels}}
 
-        Returns:
-            tuple: (response_data, latency_ms, status_code)
-        """
-        url = f'{HF_API_URL}/{self.model_name}'
-        payload = {
-            'inputs': text,
-            'parameters': {'candidate_labels': candidate_labels},
-        }
-
-        start_time = time.time()
+        start = time.time()
         with httpx.Client(timeout=30.0) as client:
             response = client.post(url, headers=self._get_headers(), json=payload)
+            latency_ms = int((time.time() - start) * 1000)
 
-            latency_ms = int((time.time() - start_time) * 1000)
-            status_code = response.status_code
-
-            # Обработка rate limit
-            if status_code == 429:
+            if response.status_code == 429:
                 logger.warning('⚠️ Rate limit, retrying...')
-                response.raise_for_status()
-
             response.raise_for_status()
-            return response.json(), latency_ms, status_code
+            return response.json(), latency_ms, response.status_code
 
-    def _insert_classified_news(self, ch_client, records: list[list]) -> None:
-        """Вставка классифицированных новостей в ClickHouse."""
-        if not records:
-            return
+    def _parse_datetime(self, value: str | None) -> datetime:
+        """Парсинг даты публикации."""
+        if not value:
+            return datetime.now()
+        if isinstance(value, str):
+            return datetime.fromisoformat(value.replace('Z', '+00:00'))
+        return value
 
-        ch_client.insert(
-            'news_classified',
-            records,
-            column_names=[
-                'source',
-                'title',
-                'url',
-                'category',
-                'confidence',
-                'model_name',
-                'published_at',
-                's3_path_raw',
-                's3_path_processed',
-            ],
-        )
-
-    def _insert_api_usage(self, ch_client, records: list[list]) -> None:
-        """Вставка записей использования API в ClickHouse."""
-        if not records:
-            return
-
-        ch_client.insert(
-            'api_usage',
-            records,
-            column_names=[
-                'api_name',
-                'tokens_used',
-                'latency_ms',
-                'status_code',
-                'dag_id',
-                'task_id',
-            ],
-        )
+    def _insert_results(
+        self, ch_client, classified: list[list], api_usage: list[list]
+    ) -> None:
+        """Вставка результатов в ClickHouse."""
+        if classified:
+            ch_client.insert(
+                'news_classified',
+                classified,
+                column_names=[
+                    'source', 'title', 'url', 'category', 'confidence',
+                    'model_name', 'published_at', 's3_path_raw', 's3_path_processed',
+                ],
+            )
+        if api_usage:
+            ch_client.insert(
+                'api_usage',
+                api_usage,
+                column_names=['api_name', 'tokens_used', 'latency_ms', 'status_code', 'dag_id', 'task_id'],
+            )
 
     def execute(self, context) -> dict:
         """Выполнение классификации."""
-        # Получение имени файла через XCom
         ti = context['task_instance']
         source_file = ti.xcom_pull(task_ids=self.source_task_id, key='processed_file')
 
-        # Проверка на пустой файл
         if not source_file:
             logger.warning('⚠️ Нет файла для классификации')
             return {'processed': 0, 'avg_confidence': 0, 'categories_distribution': {}}
 
-        minio_client = self._get_minio_client()
-        ch_client = self._get_clickhouse_client()
+        minio_client = self.get_minio_client()
+        ch_client = self.get_clickhouse_client()
 
-        # Загрузка данных
-        logger.info('📖 Чтение файла: %s/%s', self.source_bucket, source_file)
-        news_items = self._read_json_from_minio(minio_client, self.source_bucket, source_file)
-        logger.info('📦 Загружено %d элементов', len(news_items))
-
-        # Загрузка категорий
-        candidate_labels = self._load_categories()
-        logger.info('🏷️ Категории: %s', candidate_labels)
+        logger.info('📖 Чтение: %s/%s', self.source_bucket, source_file)
+        news_items = self.read_json_from_minio(minio_client, self.source_bucket, source_file)
+        labels = self._load_categories()
+        logger.info('📦 Загружено %d элементов, категории: %s', len(news_items), labels)
 
         classified_records: list[list] = []
         api_usage_records: list[list] = []
         category_counts: Counter = Counter()
         total_confidence = 0.0
-        processed_count = 0
 
         dag_id = context.get('dag').dag_id if context.get('dag') else 'unknown'
-        task_id = self.task_id
 
         for i, item in enumerate(news_items):
             item_id = item.get('id', f'unknown_{i}')
@@ -201,93 +132,41 @@ class HuggingFaceClassifierOperator(BaseOperator):
                 logger.warning('⚠️ Пропуск %s: пустой текст', item_id)
                 continue
 
-            try:
-                result, latency_ms, status_code = self._classify_text(text, candidate_labels)
+            result, latency_ms, status = self._classify_text(text, labels)
+            top_label, top_score = result['labels'][0], result['scores'][0]
 
-                # Извлекаем top prediction
-                top_label = result['labels'][0]
-                top_score = result['scores'][0]
+            if top_score < self.min_confidence:
+                top_label = 'General Tech News'
+                logger.info('🔻 %s: низкая уверенность (%.2f)', item_id, top_score)
 
-                # Проверка минимального порога
-                if top_score < self.min_confidence:
-                    top_label = 'General Tech News'
-                    logger.info(
-                        '🔻 %s: низкая уверенность (%.2f), категория: %s',
-                        item_id,
-                        top_score,
-                        top_label,
-                    )
+            classified_records.append([
+                item.get('source', 'unknown'),
+                item.get('original_title', ''),
+                item.get('url', ''),
+                top_label,
+                float(top_score),
+                self.model_name,
+                self._parse_datetime(item.get('published_at')),
+                f'raw-news/{source_file.replace("_processed", "")}',
+                f'{self.source_bucket}/{source_file}',
+            ])
 
-                # Парсинг даты публикации
-                published_at = item.get('published_at')
-                if published_at:
-                    if isinstance(published_at, str):
-                        published_at = datetime.fromisoformat(published_at.replace('Z', '+00:00'))
-                else:
-                    published_at = datetime.now()
+            api_usage_records.append([
+                'huggingface', len(text) // 4, latency_ms, status, dag_id, self.task_id
+            ])
 
-                # Запись для news_classified
-                classified_records.append(
-                    [
-                        item.get('source', 'unknown'),
-                        item.get('original_title', ''),
-                        item.get('url', ''),
-                        top_label,
-                        float(top_score),
-                        self.model_name,
-                        published_at,
-                        f'raw-news/{source_file.replace("_processed", "")}',
-                        f'{self.source_bucket}/{source_file}',
-                    ]
-                )
+            category_counts[top_label] += 1
+            total_confidence += top_score
+            logger.info('✅ %s → %s (%.2f) [%dms]', item_id, top_label, top_score, latency_ms)
 
-                # Запись для api_usage
-                tokens_estimate = len(text) // 4
-                api_usage_records.append(
-                    [
-                        'huggingface',
-                        tokens_estimate,
-                        latency_ms,
-                        status_code,
-                        dag_id,
-                        task_id,
-                    ]
-                )
+        self._insert_results(ch_client, classified_records, api_usage_records)
 
-                category_counts[top_label] += 1
-                total_confidence += top_score
-                processed_count += 1
-
-                logger.info(
-                    '✅ %s → %s (%.2f) [%dms]',
-                    item_id,
-                    top_label,
-                    top_score,
-                    latency_ms,
-                )
-
-            except httpx.HTTPStatusError as e:
-                logger.error('❌ API ошибка для %s: %s', item_id, e)
-                raise
-            except Exception as e:
-                logger.error('❌ Ошибка обработки %s: %s', item_id, e)
-                raise
-
-        # Сохранение в ClickHouse
-        logger.info('💾 Сохранение в ClickHouse...')
-        self._insert_classified_news(ch_client, classified_records)
-        self._insert_api_usage(ch_client, api_usage_records)
-
-        avg_confidence = total_confidence / processed_count if processed_count else 0
-
-        logger.info(
-            '📊 Обработано: %d, средняя уверенность: %.2f',
-            processed_count,
-            avg_confidence,
-        )
+        processed = len(classified_records)
+        avg_confidence = total_confidence / processed if processed else 0
+        logger.info('📊 Обработано: %d, средняя уверенность: %.2f', processed, avg_confidence)
 
         return {
-            'processed': processed_count,
+            'processed': processed,
             'avg_confidence': round(avg_confidence, 3),
             'categories_distribution': dict(category_counts),
         }

@@ -16,23 +16,14 @@ services:
     build: .
     ports:
       - "8080:8080"
+    env_file:
+      - .env
     environment:
       PYTHONPATH: /opt/airflow
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
-      # MinIO
-      MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
-      # ClickHouse
-      CLICKHOUSE_HOST: clickhouse
-      CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: clickhouse
-      CLICKHOUSE_DB: news_analytics
-      # HuggingFace
-      HF_MODEL_NAME: facebook/bart-large-mnli
     volumes:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs

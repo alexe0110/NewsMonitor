@@ -1,5 +1,7 @@
 FROM apache/airflow:3.1.6-python3.13
 
+ENV PYTHONPATH=/opt/airflow
+
 USER root
 RUN apt-get update && \
     apt-get install -y graphviz && \
