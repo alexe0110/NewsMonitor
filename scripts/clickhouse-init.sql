@@ -29,3 +29,14 @@ CREATE TABLE IF NOT EXISTS api_usage (
 ) ENGINE = MergeTree()
 ORDER BY (timestamp, id)
 PARTITION BY toYYYYMM(timestamp);
+
+CREATE TABLE IF NOT EXISTS processing_log (
+    id UUID DEFAULT generateUUIDv4(),
+    raw_file_path String,
+    processed_file_path String,
+    processed_at DateTime DEFAULT now(),
+    status String,
+    items_count UInt32
+) ENGINE = MergeTree()
+ORDER BY (processed_at, id)
+PARTITION BY toYYYYMM(processed_at);

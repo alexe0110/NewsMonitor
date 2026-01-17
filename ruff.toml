@@ -1,0 +1,58 @@
+line-length = 120
+target-version = "py314"
+output-format = "full"
+
+exclude = [
+    ".git",
+    ".venv",
+]
+
+[lint]
+select = [
+    "E",
+    "W",    # pycodestyle,
+    "C",    # to check McCabe complexity.
+    "F",    # Pyflakes
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions (C4)
+    "I",    # isort
+    "PT",   # flake8-pytest-style
+    "N",    # pep8-naming
+    "PERF", # Perflint
+    "PL",   # Pylint
+    "ERA",  # eradicate
+    "T20",  # flake8-print
+    "RET",  # flake8-return
+    "A",    # flake8-builtins
+    "C90",  # mccabe
+    "ISC",  # flake8-implicit-str-concat
+    "FLY",  # flynt (join -> f-string)
+    "G",    # flake8-logging-format
+    "LOG",  # flake8-logging
+    "PGH",  # pygrep-hooks
+    "PIE",  # flake8-pie
+    "Q",    # flake8-quotes
+    "RSE",  # flake8-raise
+    "RUF",  # Ruff-specific rules
+    "S",    # flake8-bandit
+    "SIM",  # flake8-simplify
+    "T10",  # flake8-debugger
+    "DTZ",  # flake8-datetimez
+    "ANN",  # flake8-annotations
+    "TRY",  # flake8-try-except
+    "PTH",  # pathlib
+]
+
+ignore = ["RUF003", "RUF002", "TRY003", "TRY400", "TRY300", "TRY301", "ANN003", "UP046"]
+
+[lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"./tests/*" = ["S101", "S311", "ANN201", "SIM117"]
+
+[format]
+quote-style = "single"
+
+
+[lint.flake8-quotes]
+inline-quotes = "single"
