@@ -1,10 +1,13 @@
 import logging
 import time
 from collections import Counter
-from datetime import datetime
+from datetime import UTC, datetime
 
 import httpx
 import yaml
+from airflow.sdk import Context
+from clickhouse_connect.driver.client import Client as ClickHouseClient
+from httpx import codes
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from config.settings import hf_settings, processing_settings, storage_settings
@@ -67,7 +70,7 @@ class HuggingFaceClassifierOperator(BaseDataProcessingOperator):
             response = client.post(url, headers=self._get_headers(), json=payload)
             latency_ms = int((time.time() - start) * 1000)
 
-            if response.status_code == 429:
+            if response.status_code == codes.TOO_MANY_REQUESTS:
                 logger.warning('⚠️ Rate limit, retrying...')
             response.raise_for_status()
             return response.json(), latency_ms, response.status_code
@@ -75,22 +78,27 @@ class HuggingFaceClassifierOperator(BaseDataProcessingOperator):
     def _parse_datetime(self, value: str | None) -> datetime:
         """Парсинг даты публикации."""
         if not value:
-            return datetime.now()
+            return datetime.now(tz=UTC)
         if isinstance(value, str):
             return datetime.fromisoformat(value.replace('Z', '+00:00'))
         return value
 
-    def _insert_results(
-        self, ch_client, classified: list[list], api_usage: list[list]
-    ) -> None:
+    def _insert_results(self, ch_client: ClickHouseClient, classified: list[list], api_usage: list[list]) -> None:
         """Вставка результатов в ClickHouse."""
         if classified:
             ch_client.insert(
                 'news_classified',
                 classified,
                 column_names=[
-                    'source', 'title', 'url', 'category', 'confidence',
-                    'model_name', 'published_at', 's3_path_raw', 's3_path_processed',
+                    'source',
+                    'title',
+                    'url',
+                    'category',
+                    'confidence',
+                    'model_name',
+                    'published_at',
+                    's3_path_raw',
+                    's3_path_processed',
                 ],
             )
         if api_usage:
@@ -100,7 +108,7 @@ class HuggingFaceClassifierOperator(BaseDataProcessingOperator):
                 column_names=['api_name', 'tokens_used', 'latency_ms', 'status_code', 'dag_id', 'task_id'],
             )
 
-    def execute(self, context) -> dict:
+    def execute(self, context: Context) -> dict:
         """Выполнение классификации."""
         ti = context['task_instance']
         source_file = ti.xcom_pull(task_ids=self.source_task_id, key='processed_file')
@@ -139,21 +147,21 @@ class HuggingFaceClassifierOperator(BaseDataProcessingOperator):
                 top_label = 'General Tech News'
                 logger.info('🔻 %s: низкая уверенность (%.2f)', item_id, top_score)
 
-            classified_records.append([
-                item.get('source', 'unknown'),
-                item.get('original_title', ''),
-                item.get('url', ''),
-                top_label,
-                float(top_score),
-                self.model_name,
-                self._parse_datetime(item.get('published_at')),
-                f'raw-news/{source_file.replace("_processed", "")}',
-                f'{self.source_bucket}/{source_file}',
-            ])
+            classified_records.append(
+                [
+                    item.get('source', 'unknown'),
+                    item.get('original_title', ''),
+                    item.get('url', ''),
+                    top_label,
+                    float(top_score),
+                    self.model_name,
+                    self._parse_datetime(item.get('published_at')),
+                    f'raw-news/{source_file.replace("_processed", "")}',
+                    f'{self.source_bucket}/{source_file}',
+                ]
+            )
 
-            api_usage_records.append([
-                'huggingface', len(text) // 4, latency_ms, status, dag_id, self.task_id
-            ])
+            api_usage_records.append(['huggingface', len(text) // 4, latency_ms, status, dag_id, self.task_id])
 
             category_counts[top_label] += 1
             total_confidence += top_score

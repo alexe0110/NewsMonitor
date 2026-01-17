@@ -1,12 +1,14 @@
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
+
+from airflow.sdk import Context
+from clickhouse_connect.driver.client import Client as ClickHouseClient
 
 from config.settings import processing_settings, storage_settings
 from plugins.operators.base import BaseDataProcessingOperator
 
 logger = logging.getLogger(__name__)
 
-# Маппинг источников на функции нормализации
 NORMALIZERS = {
     'hackernews': lambda item, max_len: {
         'id': f'hn_{item.get("id")}',
@@ -14,9 +16,7 @@ NORMALIZERS = {
         'source': 'hackernews',
         'url': item.get('url'),
         'original_title': item.get('title'),
-        'published_at': (
-            datetime.fromtimestamp(item['time']).isoformat() if item.get('time') else None
-        ),
+        'published_at': (datetime.fromtimestamp(item['time'], tz=UTC).isoformat() if item.get('time') else None),
     },
     'devto': lambda item, max_len: {
         'id': f'devto_{item.get("id")}',
@@ -73,7 +73,7 @@ class TextPreprocessingOperator(BaseDataProcessingOperator):
         return normalizer(item, self.max_text_length)
 
     def _log_processing(
-        self, ch_client, raw_files: list[str], processed_file: str, items_count: int
+        self, ch_client: ClickHouseClient, raw_files: list[str], processed_file: str, items_count: int
     ) -> None:
         """Логирование обработки в ClickHouse."""
         records = [
@@ -91,7 +91,7 @@ class TextPreprocessingOperator(BaseDataProcessingOperator):
             column_names=['raw_file_path', 'processed_file_path', 'status', 'items_count'],
         )
 
-    def execute(self, context) -> int:
+    def execute(self, context: Context) -> int:
         ti = context['task_instance']
         source_files = ti.xcom_pull(task_ids=self.source_task_id, key='source_files')
 
@@ -110,8 +110,7 @@ class TextPreprocessingOperator(BaseDataProcessingOperator):
 
             processed_items.extend(self._process_item(item) for item in raw_items)
 
-        # Сохранение
-        output_filename = f'{datetime.now().strftime("%Y-%m-%d_%H%M")}_processed.json'
+        output_filename = f'{datetime.now(tz=UTC).strftime("%Y-%m-%d_%H%M")}_processed.json'
         self.save_json_to_minio(minio_client, self.target_bucket, output_filename, processed_items)
         logger.info('✅ Сохранено %d → %s/%s', len(processed_items), self.target_bucket, output_filename)
 

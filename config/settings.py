@@ -1,28 +1,32 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class MinioSettings(BaseSettings):
+    access_key: str
+    secret_key: str
     endpoint: str = 'minio:9000'
-    access_key: str = 'minioadmin'
-    secret_key: str = 'minioadmin'
     secure: bool = False
 
     model_config = SettingsConfigDict(env_prefix='MINIO_')
 
+
 class ClickHouseSettings(BaseSettings):
-    host: str = 'clickhouse'
-    user: str = 'default'
-    password: str = 'clickhouse'
+    user: str
+    password: str
     db: str = 'news_analytics'
+    host: str = 'clickhouse'
 
     model_config = SettingsConfigDict(env_prefix='CLICKHOUSE_')
 
+
 class HuggingFaceSettings(BaseSettings):
-    model_name: str = 'facebook/bart-large-mnli'
-    api_token: str | None = None
-    api_url: str = 'https://api-inference.huggingface.co/models'
+    model_name: str = 'MoritzLaurer/deberta-v3-large-zeroshot-v2.0'
+    api_token: str | None = Field(None, description='Not required, but improves rate limit')
+    api_url: str = 'https://router.huggingface.co/models'
 
     model_config = SettingsConfigDict(env_prefix='HF_')
+
 
 class StorageSettings(BaseSettings):
     raw_bucket: str = 'raw-news'
@@ -36,8 +40,8 @@ class ProcessingSettings(BaseSettings):
     fetch_limit: int = 30
 
 
-minio_settings = MinioSettings()
-clickhouse_settings = ClickHouseSettings()
+minio_settings = MinioSettings()            # type: ignore[missing-argument]
+clickhouse_settings = ClickHouseSettings()  # type: ignore[missing-argument]
 hf_settings = HuggingFaceSettings()
 storage_settings = StorageSettings()
 processing_settings = ProcessingSettings()

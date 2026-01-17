@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
@@ -16,7 +16,7 @@ with DAG(
     default_args=default_args,
     description='Collect tech news from Hacker News and Dev.to',
     schedule='@hourly',  # Каждый час
-    start_date=datetime(2025, 1, 1),
+    start_date=datetime(2025, 1, 1, tzinfo=UTC),
     catchup=False,
     tags={'news', 'collection'},
 ) as dag:

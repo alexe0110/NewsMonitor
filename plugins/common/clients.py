@@ -1,11 +1,11 @@
 import clickhouse_connect
+from clickhouse_connect.driver.client import Client as ClickHouseClient
 from minio import Minio
 
 from config.settings import clickhouse_settings, minio_settings
 
 
 def get_minio_client() -> Minio:
-    """Создание MinIO клиента."""
     return Minio(
         endpoint=minio_settings.endpoint,
         access_key=minio_settings.access_key,
@@ -14,8 +14,7 @@ def get_minio_client() -> Minio:
     )
 
 
-def get_clickhouse_client():
-    """Создание ClickHouse клиента."""
+def get_clickhouse_client() -> ClickHouseClient:
     return clickhouse_connect.get_client(
         host=clickhouse_settings.host,
         username=clickhouse_settings.user,

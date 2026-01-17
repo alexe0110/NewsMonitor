@@ -41,7 +41,6 @@ select = [
     "DTZ",  # flake8-datetimez
     "ANN",  # flake8-annotations
     "TRY",  # flake8-try-except
-    "PTH",  # pathlib
 ]
 
 ignore = ["RUF003", "RUF002", "TRY003", "TRY400", "TRY300", "TRY301", "ANN003", "UP046"]

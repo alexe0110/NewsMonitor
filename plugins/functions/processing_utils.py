@@ -1,9 +1,7 @@
-"""Утилиты для отслеживания обработки файлов."""
-
 import logging
 
 from config.settings import storage_settings
-from plugins.common import get_clickhouse_client, get_minio_client
+from plugins.common.clients import get_clickhouse_client, get_minio_client
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +16,6 @@ def find_unprocessed_files(**context) -> int:
     minio_client = get_minio_client()
     ch_client = get_clickhouse_client()
 
-    # Получаем список JSON файлов в raw-news
     raw_files = {
         obj.object_name
         for obj in minio_client.list_objects(storage_settings.raw_bucket)
@@ -26,14 +23,10 @@ def find_unprocessed_files(**context) -> int:
     }
     logger.info('📂 Найдено %d файлов в raw-news', len(raw_files))
 
-    # Получаем уже обработанные файлы
-    result = ch_client.query(
-        "SELECT DISTINCT raw_file_path FROM processing_log WHERE status = 'success'"
-    )
+    result = ch_client.query("SELECT DISTINCT raw_file_path FROM processing_log WHERE status = 'success'")
     processed_files = {row[0].replace(f'{storage_settings.raw_bucket}/', '') for row in result.result_rows}
     logger.info('✅ Уже обработано: %d файлов', len(processed_files))
 
-    # Находим разницу
     unprocessed = sorted(raw_files - processed_files)
     logger.info('📋 Необработанных файлов: %d', len(unprocessed))
 
@@ -42,7 +35,6 @@ def find_unprocessed_files(**context) -> int:
     else:
         logger.warning('⚠️ Нет новых файлов для обработки')
 
-    # Push в XCom
     if ti := context.get('task_instance'):
         ti.xcom_push(key='source_files', value=unprocessed)
 
