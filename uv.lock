@@ -1958,6 +1958,8 @@ dependencies = [
     { name = "httpx" },
     { name = "minio" },
     { name = "pydantic" },
+    { name = "pyyaml" },
+    { name = "tenacity" },
     { name = "transformers" },
 ]
 
@@ -1978,6 +1980,8 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.25" },
     { name = "minio", specifier = ">=7.2" },
     { name = "pydantic", specifier = ">=2.5" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "tenacity", specifier = ">=8.2" },
     { name = "transformers", specifier = ">=4.36" },
 ]
 
