@@ -99,7 +99,7 @@ services:
       CLICKHOUSE_PASSWORD: clickhouse
     volumes:
       - clickhouse-data:/var/lib/clickhouse
-      - ./init-scripts:/docker-entrypoint-initdb.d:ro
+      - ./scripts/clickhouse-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
       interval: 5s
@@ -107,7 +107,7 @@ services:
       retries: 5
 
   grafana:
-    image: grafana/grafana:11-ubuntu
+    image: grafana/grafana:latest
     ports:
       - "3000:3000"
     environment:
