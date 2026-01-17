@@ -4,9 +4,13 @@ import json
 from datetime import datetime
 import os
 import io
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def get_minio_client():
+    """Создание MinIO клиента из environment variables"""
     return Minio(
         endpoint=os.getenv("MINIO_ENDPOINT", "minio:9000"),
         access_key=os.getenv("MINIO_ACCESS_KEY", "minioadmin"),
@@ -34,8 +38,7 @@ def fetch_hackernews(**context):
     Загрузка топ-30 новостей из Hacker News API
     Сохраняет результат в MinIO bucket raw-news
     """
-    ti = context["ti"]
-    ti.log.info("Fetching Hacker News top stories...")
+    logger.info("Fetching Hacker News top stories...")
 
     # Получить список top story IDs
     try:
@@ -43,9 +46,9 @@ def fetch_hackernews(**context):
             "https://hacker-news.firebaseio.com/v0/topstories.json", timeout=10.0
         )
         response.raise_for_status()
-        story_ids = response.json()[:30]  # Берем первые 30
+        story_ids = response.json()[:30]
     except httpx.HTTPError as e:
-        ti.log.error(f"Failed to fetch story IDs: {e}")
+        logger.error(f"Failed to fetch story IDs: {e}")
         raise
 
     # Получить детали для каждой новости
@@ -59,6 +62,7 @@ def fetch_hackernews(**context):
             response.raise_for_status()
             item = response.json()
 
+            # Добавляем только если есть title и url
             if item and item.get("title") and item.get("url"):
                 news_items.append(
                     {
@@ -72,17 +76,17 @@ def fetch_hackernews(**context):
                     }
                 )
         except httpx.HTTPError as e:
-            ti.log.warning(f"Failed to fetch story {story_id}: {e}")
+            logger.warning(f"Failed to fetch story {story_id}: {e}")
             continue
 
-    ti.log.info(f"Fetched {len(news_items)} items from Hacker News")
+    logger.info(f"Fetched {len(news_items)} items from Hacker News")
 
     # Сохранить в MinIO
     minio_client = get_minio_client()
     filename = f"{datetime.now().strftime('%Y-%m-%d_%H%M')}_hackernews.json"
 
     save_to_minio(minio_client, "raw-news", filename, news_items)
-    ti.log.info(f"Saved to MinIO: raw-news/{filename}")
+    logger.info(f"Saved to MinIO: raw-news/{filename}")
 
     return len(news_items)
 
@@ -92,8 +96,7 @@ def fetch_devto(**context):
     Загрузка последних 30 статей из Dev.to API
     Сохраняет результат в MinIO bucket raw-news
     """
-    ti = context["ti"]
-    ti.log.info("Fetching Dev.to articles...")
+    logger.info("Fetching Dev.to articles...")
 
     # Получить статьи
     try:
@@ -103,7 +106,7 @@ def fetch_devto(**context):
         response.raise_for_status()
         articles = response.json()
     except httpx.HTTPError as e:
-        ti.log.error(f"Failed to fetch Dev.to articles: {e}")
+        logger.error(f"Failed to fetch Dev.to articles: {e}")
         raise
 
     # Форматировать данные
@@ -122,13 +125,13 @@ def fetch_devto(**context):
             }
         )
 
-    ti.log.info(f"Fetched {len(news_items)} items from Dev.to")
+    logger.info(f"Fetched {len(news_items)} items from Dev.to")
 
     # Сохранить в MinIO
     minio_client = get_minio_client()
     filename = f"{datetime.now().strftime('%Y-%m-%d_%H%M')}_devto.json"
 
     save_to_minio(minio_client, "raw-news", filename, news_items)
-    ti.log.info(f"Saved to MinIO: raw-news/{filename}")
+    logger.info(f"Saved to MinIO: raw-news/{filename}")
 
     return len(news_items)

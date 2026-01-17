@@ -1,5 +1,11 @@
 FROM apache/airflow:3.1.6-python3.13
 
+USER root
+RUN apt-get update && \
+    apt-get install -y graphviz && \
+    rm -rf /var/lib/apt/lists/*
+
+USER airflow
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/home/airflow/.cargo/bin:$PATH"
 
