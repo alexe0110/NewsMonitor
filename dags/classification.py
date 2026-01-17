@@ -26,12 +26,12 @@ with DAG(
 
     preprocess = TextPreprocessingOperator(
         task_id='preprocess_news',
-        source_files="{{ ti.xcom_pull(task_ids='find_unprocessed_files', key='source_files') }}",
+        source_task_id='find_unprocessed_files',
     )
 
     classify = HuggingFaceClassifierOperator(
         task_id='classify_news',
-        source_file="{{ ti.xcom_pull(task_ids='preprocess_news', key='processed_file') }}",
+        source_task_id='preprocess_news',
     )
 
     find_unprocessed >> preprocess >> classify

@@ -30,19 +30,17 @@ class HuggingFaceClassifierOperator(BaseOperator):
     (zero-shot classification) и сохраняет результаты в ClickHouse.
 
     Args:
-        source_file: Имя файла в processed-news bucket.
+        source_task_id: ID таска для получения имени файла через XCom.
         model_name: Название модели HuggingFace.
         categories_config: Путь к YAML файлу с категориями.
         min_confidence: Минимальный порог уверенности.
         source_bucket: Bucket для чтения данных.
     """
 
-    template_fields = ('source_file',)
-
     def __init__(
         self,
         *,
-        source_file: str,
+        source_task_id: str = 'preprocess_news',
         model_name: str = 'facebook/bart-large-mnli',
         categories_config: str = '/opt/airflow/config/categories.yaml',
         min_confidence: float = 0.3,
@@ -50,7 +48,7 @@ class HuggingFaceClassifierOperator(BaseOperator):
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
-        self.source_file = source_file
+        self.source_task_id = source_task_id
         self.model_name = os.getenv('HF_MODEL_NAME', model_name)
         self.categories_config = categories_config
         self.min_confidence = min_confidence
@@ -165,17 +163,21 @@ class HuggingFaceClassifierOperator(BaseOperator):
 
     def execute(self, context) -> dict:
         """Выполнение классификации."""
+        # Получение имени файла через XCom
+        ti = context['task_instance']
+        source_file = ti.xcom_pull(task_ids=self.source_task_id, key='processed_file')
+
         # Проверка на пустой файл
-        if not self.source_file:
-            logger.warning('⚠️ Нет файла для классификации, пропуск')
+        if not source_file:
+            logger.warning('⚠️ Нет файла для классификации')
             return {'processed': 0, 'avg_confidence': 0, 'categories_distribution': {}}
 
         minio_client = self._get_minio_client()
         ch_client = self._get_clickhouse_client()
 
         # Загрузка данных
-        logger.info('📖 Чтение файла: %s/%s', self.source_bucket, self.source_file)
-        news_items = self._read_json_from_minio(minio_client, self.source_bucket, self.source_file)
+        logger.info('📖 Чтение файла: %s/%s', self.source_bucket, source_file)
+        news_items = self._read_json_from_minio(minio_client, self.source_bucket, source_file)
         logger.info('📦 Загружено %d элементов', len(news_items))
 
         # Загрузка категорий
@@ -234,8 +236,8 @@ class HuggingFaceClassifierOperator(BaseOperator):
                         float(top_score),
                         self.model_name,
                         published_at,
-                        f'raw-news/{self.source_file.replace("_processed", "")}',
-                        f'{self.source_bucket}/{self.source_file}',
+                        f'raw-news/{source_file.replace("_processed", "")}',
+                        f'{self.source_bucket}/{source_file}',
                     ]
                 )
 

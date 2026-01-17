@@ -19,27 +19,25 @@ class TextPreprocessingOperator(BaseOperator):
     обрезает текст и сохраняет в processed-news bucket.
 
     Args:
+        source_task_id: ID таска для получения списка файлов через XCom.
         source_bucket: Bucket для чтения сырых данных.
         target_bucket: Bucket для сохранения обработанных данных.
-        source_files: Список файлов для обработки.
         max_text_length: Максимальная длина текста (default: 2000).
     """
-
-    template_fields = ('source_files',)
 
     def __init__(
         self,
         *,
+        source_task_id: str = 'find_unprocessed_files',
         source_bucket: str = 'raw-news',
         target_bucket: str = 'processed-news',
-        source_files: list[str],
         max_text_length: int = 2000,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
+        self.source_task_id = source_task_id
         self.source_bucket = source_bucket
         self.target_bucket = target_bucket
-        self.source_files = source_files
         self.max_text_length = max_text_length
 
     def _get_minio_client(self) -> Minio:
@@ -135,17 +133,18 @@ class TextPreprocessingOperator(BaseOperator):
         }
 
     def execute(self, context) -> int:
-        """Выполнение оператора."""
-        # Проверка на пустой список файлов
-        if not self.source_files:
-            logger.warning('⚠️ Нет файлов для обработки, пропуск')
+        ti = context['task_instance']
+        source_files = ti.xcom_pull(task_ids=self.source_task_id, key='source_files')
+
+        if not source_files:
+            logger.warning('⚠️ Нет файлов для обработки')
             return 0
 
         minio_client = self._get_minio_client()
         ch_client = self._get_clickhouse_client()
         processed_items: list[dict] = []
 
-        for filename in self.source_files:
+        for filename in source_files:
             logger.info('📖 Чтение файла: %s/%s', self.source_bucket, filename)
 
             try:
@@ -170,7 +169,7 @@ class TextPreprocessingOperator(BaseOperator):
             output_filename,
         )
 
-        self._log_processing(ch_client, self.source_files, output_filename, len(processed_items))
+        self._log_processing(ch_client, source_files, output_filename, len(processed_items))
         logger.info('📝 Записано в processing_log')
 
         # Push в XCom
