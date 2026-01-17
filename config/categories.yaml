@@ -1,0 +1,44 @@
+categories:
+  ai_ml:
+    name: "AI/ML"
+    description: "Artificial intelligence, machine learning, neural networks, deep learning, LLMs, GPT, transformers"
+
+  backend:
+    name: "Backend Development"
+    description: "Server-side development, REST APIs, GraphQL, databases, microservices, system design"
+
+  frontend:
+    name: "Frontend Development"
+    description: "Web interfaces, JavaScript, TypeScript, React, Vue, Angular, CSS, HTML"
+
+  devops:
+    name: "DevOps/Infrastructure"
+    description: "CI/CD, Docker, Kubernetes, cloud platforms, deployment, monitoring, infrastructure as code"
+
+  security:
+    name: "Security"
+    description: "Cybersecurity, vulnerabilities, encryption, authentication, penetration testing, privacy"
+
+  mobile:
+    name: "Mobile Development"
+    description: "iOS, Android, React Native, Flutter, mobile apps, Swift, Kotlin"
+
+  data:
+    name: "Data Engineering"
+    description: "Data pipelines, ETL, big data, Apache Spark, Airflow, data warehouses, analytics"
+
+  iot:
+    name: "IoT"
+    description: "Internet of Things, embedded systems, smart devices, sensors, Arduino, Raspberry Pi, hardware"
+
+  relocate:
+    name: "Relocate"
+    description: "Developer relocation, remote work, working abroad, visas, international jobs, digital nomad"
+
+  lifestyle:
+    name: "Lifestyle"
+    description: "Work-life balance, productivity, career advice, soft skills, mental health, developer culture"
+
+  general:
+    name: "General Tech News"
+    description: "Technology news, startups, programming languages, tools, industry trends, conferences"
