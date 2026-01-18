@@ -141,7 +141,22 @@ class HuggingFaceClassifierOperator(BaseDataProcessingOperator):
                 continue
 
             result, latency_ms, status = self._classify_text(text, labels)
-            top_label, top_score = result['labels'][0], result['scores'][0]
+            if isinstance(result, list):
+                result = result[0]
+
+            # Обработка ошибок API (модель загружается, ошибка и т.д.)
+            if 'error' in result:
+                logger.error('❌ API error для %s: %s', item_id, result['error'])
+                continue
+
+            # Поддержка обоих форматов ответа API
+            if 'labels' in result and 'scores' in result:
+                top_label, top_score = result['labels'][0], result['scores'][0]
+            elif 'label' in result and 'score' in result:
+                top_label, top_score = result['label'], result['score']
+            else:
+                logger.error('❌ Неожиданный формат ответа для %s: %s', item_id, result)
+                continue
 
             if top_score < self.min_confidence:
                 top_label = 'General Tech News'
