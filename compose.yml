@@ -16,30 +16,19 @@ services:
     build: .
     ports:
       - "8080:8080"
+    env_file:
+      - .env
     environment:
-      # Используем LocalExecutor
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
-      # Credentials
-      _AIRFLOW_WWW_USER_USERNAME: airflow
-      _AIRFLOW_WWW_USER_PASSWORD: airflow
-      # MinIO
-      MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
-      # ClickHouse
-      CLICKHOUSE_HOST: clickhouse
-      CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: clickhouse
-      CLICKHOUSE_DB: news_analytics
-      # HuggingFace
-      HF_MODEL_NAME: facebook/bart-large-mnli
+      AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: 30
     volumes:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
       - ./plugins:/opt/airflow/plugins
+      - ./config:/opt/airflow/config
     depends_on:
       postgres:
         condition: service_healthy
@@ -47,14 +36,9 @@ services:
         condition: service_healthy
       clickhouse:
         condition: service_healthy
-    command: >
-      bash -c "
-      airflow db migrate &&
-      airflow users create --username airflow --password airflow --firstname Air --lastname Flow --role Admin --email admin@example.com || true &&
-      airflow webserver & airflow scheduler
-      "
+    command: airflow standalone
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/health" ]
       interval: 10s
       timeout: 5s
       retries: 5
