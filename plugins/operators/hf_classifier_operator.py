@@ -1,16 +1,16 @@
 import logging
 import time
 from collections import Counter
-from datetime import UTC, datetime
 
 import httpx
 import yaml
 from airflow.sdk import Context
-from clickhouse_connect.driver.client import Client as ClickHouseClient
 from httpx import codes
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from config.settings import hf_settings, processing_settings, storage_settings
+from plugins.common.clickhouse_utils import ApiUsage, ClassifiedNews, insert_api_usage, insert_classified_news
+from plugins.common.utils import parse_datetime
 from plugins.operators.base import BaseDataProcessingOperator
 
 logger = logging.getLogger(__name__)
@@ -75,39 +75,6 @@ class HuggingFaceClassifierOperator(BaseDataProcessingOperator):
             response.raise_for_status()
             return response.json(), latency_ms, response.status_code
 
-    def _parse_datetime(self, value: str | None) -> datetime:
-        """Парсинг даты публикации."""
-        if not value:
-            return datetime.now(tz=UTC)
-        if isinstance(value, str):
-            return datetime.fromisoformat(value.replace('Z', '+00:00'))
-        return value
-
-    def _insert_results(self, ch_client: ClickHouseClient, classified: list[list], api_usage: list[list]) -> None:
-        """Вставка результатов в ClickHouse."""
-        if classified:
-            ch_client.insert(
-                'news_classified',
-                classified,
-                column_names=[
-                    'source',
-                    'title',
-                    'url',
-                    'category',
-                    'confidence',
-                    'model_name',
-                    'published_at',
-                    's3_path_raw',
-                    's3_path_processed',
-                ],
-            )
-        if api_usage:
-            ch_client.insert(
-                'api_usage',
-                api_usage,
-                column_names=['api_name', 'tokens_used', 'latency_ms', 'status_code', 'dag_id', 'task_id'],
-            )
-
     def execute(self, context: Context) -> dict:
         """Выполнение классификации."""
         ti = context['task_instance']
@@ -125,8 +92,8 @@ class HuggingFaceClassifierOperator(BaseDataProcessingOperator):
         labels = self._load_categories()
         logger.info('📦 Загружено %d элементов, категории: %s', len(news_items), labels)
 
-        classified_records: list[list] = []
-        api_usage_records: list[list] = []
+        classified_records: list[ClassifiedNews] = []
+        api_usage_records: list[ApiUsage] = []
         category_counts: Counter = Counter()
         total_confidence = 0.0
 
@@ -144,12 +111,10 @@ class HuggingFaceClassifierOperator(BaseDataProcessingOperator):
             if isinstance(result, list):
                 result = result[0]
 
-            # Обработка ошибок API (модель загружается, ошибка и т.д.)
             if 'error' in result:
                 logger.error('❌ API error для %s: %s', item_id, result['error'])
                 continue
 
-            # Поддержка обоих форматов ответа API
             if 'labels' in result and 'scores' in result:
                 top_label, top_score = result['labels'][0], result['scores'][0]
             elif 'label' in result and 'score' in result:
@@ -163,26 +128,36 @@ class HuggingFaceClassifierOperator(BaseDataProcessingOperator):
                 logger.info('🔻 %s: низкая уверенность (%.2f)', item_id, top_score)
 
             classified_records.append(
-                [
-                    item.get('source', 'unknown'),
-                    item.get('original_title', ''),
-                    item.get('url', ''),
-                    top_label,
-                    float(top_score),
-                    self.model_name,
-                    self._parse_datetime(item.get('published_at')),
-                    f'raw-news/{source_file.replace("_processed", "")}',
-                    f'{self.source_bucket}/{source_file}',
-                ]
+                ClassifiedNews(
+                    source=item.get('source', 'unknown'),
+                    title=item.get('original_title', ''),
+                    url=item.get('url', ''),
+                    category=top_label,
+                    confidence=top_score,
+                    model_name=self.model_name,
+                    published_at=parse_datetime(item.get('published_at')),
+                    s3_path_raw=f'raw-news/{source_file.replace("_processed", "")}',
+                    s3_path_processed=f'{self.source_bucket}/{source_file}',
+                )
             )
 
-            api_usage_records.append(['huggingface', len(text) // 4, latency_ms, status, dag_id, self.task_id])
+            api_usage_records.append(
+                ApiUsage(
+                    api_name='huggingface',
+                    tokens_used=len(text) // 4,
+                    latency_ms=latency_ms,
+                    status_code=status,
+                    dag_id=dag_id,
+                    task_id=self.task_id,
+                )
+            )
 
             category_counts[top_label] += 1
             total_confidence += top_score
             logger.info('✅ %s → %s (%.2f) [%dms]', item_id, top_label, top_score, latency_ms)
 
-        self._insert_results(ch_client, classified_records, api_usage_records)
+        insert_classified_news(ch_client, classified_records)
+        insert_api_usage(ch_client, api_usage_records)
 
         processed = len(classified_records)
         avg_confidence = total_confidence / processed if processed else 0

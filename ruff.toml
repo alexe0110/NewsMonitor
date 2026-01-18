@@ -52,6 +52,13 @@ ignore = ["RUF003", "RUF002", "TRY003", "TRY400", "TRY300", "TRY301", "ANN003", 
 [format]
 quote-style = "single"
 
+[lint.pylint]
+max-args = 15
+max-bool-expr = 5
+max-nested-blocks = 5
+max-public-methods = 13
+max-returns = 6
+max-statements = 50
 
 [lint.flake8-quotes]
 inline-quotes = "single"

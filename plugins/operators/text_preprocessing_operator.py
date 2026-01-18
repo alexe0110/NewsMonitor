@@ -2,45 +2,13 @@ import logging
 from datetime import UTC, datetime
 
 from airflow.sdk import Context
-from clickhouse_connect.driver.client import Client as ClickHouseClient
 
 from config.settings import processing_settings, storage_settings
+from plugins.common.clickhouse_utils import ProcessingLog, insert_processing_log
+from plugins.common.normalizers import NORMALIZERS
 from plugins.operators.base import BaseDataProcessingOperator
 
 logger = logging.getLogger(__name__)
-
-NORMALIZERS = {
-    'hackernews': lambda item, max_len: {
-        'id': f'hn_{item.get("id")}',
-        'text': _truncate(item.get('title', ''), max_len),
-        'source': 'hackernews',
-        'url': item.get('url'),
-        'original_title': item.get('title'),
-        'published_at': (datetime.fromtimestamp(item['time'], tz=UTC).isoformat() if item.get('time') else None),
-    },
-    'devto': lambda item, max_len: {
-        'id': f'devto_{item.get("id")}',
-        'text': _truncate(_build_devto_text(item), max_len),
-        'source': 'devto',
-        'url': item.get('url'),
-        'original_title': item.get('title'),
-        'published_at': item.get('published_at'),
-    },
-}
-
-
-def _truncate(text: str, max_length: int) -> str:
-    """Обрезает текст до максимальной длины."""
-    if len(text) > max_length:
-        return text[: max_length - 3] + '...'
-    return text
-
-
-def _build_devto_text(item: dict) -> str:
-    """Собирает текст из Dev.to статьи."""
-    title = item.get('title', '')
-    description = item.get('description', '')
-    return f'{title}. {description}' if description else title
 
 
 class TextPreprocessingOperator(BaseDataProcessingOperator):
@@ -69,27 +37,8 @@ class TextPreprocessingOperator(BaseDataProcessingOperator):
     def _process_item(self, item: dict) -> dict:
         """Нормализация элемента новости."""
         source = item.get('source', 'unknown')
-        normalizer = NORMALIZERS.get(source, NORMALIZERS['devto'])
-        return normalizer(item, self.max_text_length)
-
-    def _log_processing(
-        self, ch_client: ClickHouseClient, raw_files: list[str], processed_file: str, items_count: int
-    ) -> None:
-        """Логирование обработки в ClickHouse."""
-        records = [
-            [
-                f'{self.source_bucket}/{filename}',
-                f'{self.target_bucket}/{processed_file}',
-                'success',
-                items_count,
-            ]
-            for filename in raw_files
-        ]
-        ch_client.insert(
-            'processing_log',
-            records,
-            column_names=['raw_file_path', 'processed_file_path', 'status', 'items_count'],
-        )
+        normalizer = NORMALIZERS.get(source)
+        return normalizer(item, self.max_text_length).model_dump()
 
     def execute(self, context: Context) -> int:
         ti = context['task_instance']
@@ -114,7 +63,16 @@ class TextPreprocessingOperator(BaseDataProcessingOperator):
         self.save_json_to_minio(minio_client, self.target_bucket, output_filename, processed_items)
         logger.info('✅ Сохранено %d → %s/%s', len(processed_items), self.target_bucket, output_filename)
 
-        self._log_processing(ch_client, source_files, output_filename, len(processed_items))
+        processing_logs = [
+            ProcessingLog(
+                raw_file_path=f'{self.source_bucket}/{filename}',
+                processed_file_path=f'{self.target_bucket}/{output_filename}',
+                status='success',
+                items_count=len(processed_items),
+            )
+            for filename in source_files
+        ]
+        insert_processing_log(ch_client, processing_logs)
 
         ti.xcom_push(key='processed_file', value=output_filename)
         return len(processed_items)
