@@ -23,6 +23,8 @@ class HuggingFaceSettings(BaseSettings):
     api_token: str
     model_name: str = 'facebook/bart-large-mnli'
     api_url: str = 'https://router.huggingface.co/hf-inference/models'
+    timeout: float = 120.0
+    max_retries: int = 3
 
     model_config = SettingsConfigDict(env_prefix='HF_')
 
