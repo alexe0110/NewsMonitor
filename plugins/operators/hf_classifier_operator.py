@@ -6,7 +6,7 @@ import httpx
 import yaml
 from airflow.sdk import Context
 from httpx import codes
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from config.settings import hf_settings, processing_settings, storage_settings
 from plugins.common.clickhouse_utils import ApiUsage, ClassifiedNews, insert_api_usage, insert_classified_news
@@ -38,6 +38,8 @@ class HuggingFaceClassifierOperator(BaseDataProcessingOperator):
         self.model_name = hf_settings.model_name
         self.api_url = hf_settings.api_url
         self.api_token = hf_settings.api_token
+        self.timeout = hf_settings.timeout
+        self.max_retries = hf_settings.max_retries
         self.categories_config = categories_config or storage_settings.categories_config
         self.min_confidence = min_confidence or processing_settings.min_confidence
         self.source_bucket = source_bucket or storage_settings.processed_bucket
@@ -55,25 +57,36 @@ class HuggingFaceClassifierOperator(BaseDataProcessingOperator):
             headers['Authorization'] = f'Bearer {self.api_token}'
         return headers
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((httpx.HTTPStatusError, httpx.TimeoutException)),
-    )
     def _classify_text(self, text: str, labels: list[str]) -> tuple[dict, int, int]:
-        """Классификация через HuggingFace API."""
+        """Классификация через HuggingFace API с retry."""
         url = f'{self.api_url}/{self.model_name}'
         payload = {'inputs': text, 'parameters': {'candidate_labels': labels}}
 
-        start = time.time()
-        with httpx.Client(timeout=30.0) as client:
-            response = client.post(url, headers=self._get_headers(), json=payload)
-            latency_ms = int((time.time() - start) * 1000)
+        @retry(
+            stop=stop_after_attempt(self.max_retries),
+            wait=wait_exponential(multiplier=2, min=2, max=60),
+            retry=retry_if_exception_type(
+                (
+                    httpx.HTTPStatusError,
+                    httpx.TimeoutException,
+                    httpx.RemoteProtocolError,
+                    httpx.ConnectError,
+                )
+            ),
+            before_sleep=before_sleep_log(logger, logging.WARNING),
+        )
+        def _make_request() -> tuple[dict, int, int]:
+            start = time.time()
+            with httpx.Client(timeout=self.timeout) as client:
+                response = client.post(url, headers=self._get_headers(), json=payload)
+                latency_ms = int((time.time() - start) * 1000)
 
-            if response.status_code == codes.TOO_MANY_REQUESTS:
-                logger.warning('⚠️ Rate limit, retrying...')
-            response.raise_for_status()
-            return response.json(), latency_ms, response.status_code
+                if response.status_code == codes.TOO_MANY_REQUESTS:
+                    logger.warning('⚠️ Rate limit, retrying...')
+                response.raise_for_status()
+                return response.json(), latency_ms, response.status_code
+
+        return _make_request()
 
     def execute(self, context: Context) -> dict:
         """Выполнение классификации."""
